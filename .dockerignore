@@ -1,0 +1,8 @@
+node_modules/*
+cloudformation/*
+logs.log
+.env
+.env.example
+bitbucket-pipelines.yml
+Makefile
+README.md

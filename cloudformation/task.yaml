@@ -1,0 +1,198 @@
+Description: "ECS task configuration for the SonarQube script"
+Parameters:
+  EcsImage:
+    Type: String
+    Description: "The image to use for a task container."
+  SonarQubeURL:
+    Type: String
+    Description: "https://{SonarQube}, no trailing /"
+  GitURL:
+    Type: String
+    Description: "https://{GitProvider} no trailing /"
+  GitEmail:
+    Type: String
+    Description: "Email address of the git user"
+  GitUserName:
+    Type: String
+    Description: "Git user"
+  GitPassword:
+    Type: String
+    Description: "Git password, KMS encrypted"
+  KMSKey:
+    Type: String
+    Description: "KMS key id for decrypting secrets"
+  Organization:
+    Type: String
+    Description: "Organization that should be imported"
+  SonarQubeAPIKey:
+    Type: String
+    Description: "Sonarqube API key, KMS encrypted"
+  SonarQubeCIKey:
+    Type: String
+    Description: "Sonarqube CI key, KMS encrypted"
+  EcsCluster:
+    Type: String
+    Description: "Name of the ecs cluster where the task should be run"
+  Subnet:
+    Type: String
+    Description: "The subnet used to run the task"
+
+Resources:
+  EcsTaskDefinition:
+    Type: "AWS::ECS::TaskDefinition"
+    Properties:
+      Cpu: "512"
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Memory: "1GB"
+      NetworkMode: "awsvpc"
+      RequiresCompatibilities:
+        - "FARGATE"
+      ContainerDefinitions:
+        - Image: !Ref EcsImage
+          LogConfiguration:
+            LogDriver: "awslogs"
+            Options:
+              awslogs-group: "/aws/ecs/sonarqube-script"
+              awslogs-region: !Sub "${AWS::Region}"
+              awslogs-stream-prefix: "ecs"
+          Memory: 1024
+          Name: "sonarqube-script"
+          Environment:
+            - Name: GIT_URL
+              Value: !Ref GitURL
+            - Name: GIT_EMAIL
+              Value: !Ref GitEmail
+            - Name: GIT_USERNAME
+              Value: !Ref GitUserName
+            - Name: SONARQUBE_URL
+              Value: !Ref SonarQubeURL
+            - Name: KMS_DECRYPT_GIT_PASSWORD
+              Value: !Ref GitPassword
+            - Name: KMS_DECRYPT_SONARQUBE_API_KEY
+              Value: !Ref SonarQubeAPIKey
+            - Name: KMS_DECRYPT_SONARQUBE_CI_KEY
+              Value: !Ref SonarQubeCIKey
+            - Name: ORGANIZATION
+              Value: !Ref Organization
+
+
+  ExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: sonarqube-exec-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ecs-tasks.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: sonarqube-exec-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KMSKey}"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ecs/sonarqube-script*"
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: "*"
+
+  TaskRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ecs-tasks.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: sonarqube-exec-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KMSKey}"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/ecs/sonarqube-script*"
+
+  LogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: "/aws/ecs/sonarqube-script"
+      RetentionInDays: 90
+
+
+  CloudWatchEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "events.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: ecs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "iam:PassRole"
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    'iam:PassedToService':
+                      - "ecs-tasks.amazonaws.com"
+              -
+                Effect: "Allow"
+                Action:
+                  - "ecs:RunTask"
+                Resource: !Ref EcsTaskDefinition
+
+  scheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "SonarQube scheduler"
+      ScheduleExpression: "cron(0 12 ? * 1 *)" #Run evry monday at 12:00UTC
+      State:  "ENABLED"
+      Targets:
+        - Id: SonarQube
+          Arn: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${EcsCluster}"
+          RoleArn: !GetAtt CloudWatchEventRole.Arn
+          EcsParameters:
+            TaskDefinitionArn: !Ref EcsTaskDefinition
+            LaunchType: FARGATE
+            PlatformVersion: 1.4.0
+            NetworkConfiguration:
+              AwsVpcConfiguration:
+                Subnets:
+                  - !Ref Subnet

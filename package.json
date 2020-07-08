@@ -1,0 +1,21 @@
+{
+  "name": "sonarqube-bitbucket-script",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/dwtechnologies/sonarqube-bitbucket-script.git",
+  "author": "johhil",
+  "license": "MIT",
+  "scripts": {
+    "dev": "NODE_ENVIRONMENT=dev node index.js",
+    "start": "NODE_ENVIRONMENT=production node index.js"
+  },
+  "dependencies": {
+    "axios": "^0.19.2",
+    "nodegit": "^0.26.5",
+    "rimraf": "^3.0.2",
+    "winston": "^3.2.1"
+  },
+  "devDependencies": {
+    "dotenv": "^8.2.0"
+  }
+}

@@ -1,0 +1,11 @@
+Description: SonarQube Script Repository
+
+Resources:
+  SonarQubeRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: sonarqube-script
+
+Outputs:
+  Arn:
+    Value: !GetAtt SonarQubeRepo.Arn
